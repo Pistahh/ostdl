@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::borrow::Cow;
 use std::borrow::Cow::Borrowed;
+use std::cmp::Ordering;
 
 use xmlrpc::{Request, Value, RequestError, Fault};
 use reqwest::Client;
@@ -188,6 +189,18 @@ type Subs = Vec<Sub>;
 /// A vec of Sub-refs
 type SubRefs<'a> = Vec<&'a Sub>;
 
+/// orders two scores - higher or non-NaN first.
+fn score_cmp(a: &&Sub, b: &&Sub) -> Ordering {
+    let a = a.score;
+    let b = b.score;
+    match (a.is_nan(), b.is_nan()) {
+        (true, true)  => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        _             => b.partial_cmp(&a).unwrap()
+    }
+}
+
 /// Returns the subtitles only for the given language
 /// sorted (higher score first)
 fn get_lang<'a>(subs: &'a Subs, lang: &str) -> SubRefs<'a> {
@@ -197,7 +210,7 @@ fn get_lang<'a>(subs: &'a Subs, lang: &str) -> SubRefs<'a> {
             .filter(|i| &i.lang == lang)
             .collect();
 
-    lang_subs.sort_by(|a,b| b.score.partial_cmp(&a.score).unwrap());
+    lang_subs.sort_by(score_cmp);
 
     lang_subs
 }
