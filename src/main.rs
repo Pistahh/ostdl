@@ -398,6 +398,7 @@ fn real_main() -> Result<(), Error> {
             .takes_value(false))
         .arg(Arg::with_name("FILES")
             .multiple(true)
+            .required(true)
             .help("Files to download subtitles for"))
         .get_matches();
 
