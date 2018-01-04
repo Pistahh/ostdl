@@ -231,7 +231,7 @@ fn match_to_sub(v: &Value) -> Option<Sub> {
 
     let lang = data.get("SubLanguageID")
                     .and_then(val_to_str)
-                    .unwrap_or("srt")
+                    .unwrap_or("nolang")
                     .into();
 
     let score = data.get("Score")
@@ -240,7 +240,7 @@ fn match_to_sub(v: &Value) -> Option<Sub> {
 
     let format = data.get("SubFormat")
                     .and_then(val_to_str)
-                    .unwrap_or("")
+                    .unwrap_or("srt")
                     .into();
 
     Some(Sub { url, score, lang, format })
