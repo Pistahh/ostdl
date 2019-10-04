@@ -24,7 +24,7 @@ use libflate::gzip::Decoder;
 use xmlrpc::{Error as RequestError, Fault, Request, Value};
 
 /// opensubtitles XML-RPC API entry point
-const OST_API_URL: &'static str = "http:/api.opensubtitles.org/xml-rpc";
+const OST_API_URL: &'static str = "https://api.opensubtitles.org/xml-rpc";
 
 /// A commonly used Error
 const E_INV_RESP: Error = Error::Ost(Borrowed("invalid xml-rpc response"));
