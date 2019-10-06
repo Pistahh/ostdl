@@ -1,32 +1,30 @@
-
+extern crate libflate;
 extern crate reqwest;
 extern crate xmlrpc;
-extern crate libflate;
 #[macro_use]
 extern crate clap;
 
-use std::fs::File;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::io;
-use std::io::prelude::*;
-use std::mem;
-use std::num::Wrapping;
-use std::path::PathBuf;
-use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
 use std::borrow::Cow;
 use std::borrow::Cow::Borrowed;
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
+use std::mem;
+use std::num::Wrapping;
+use std::path::PathBuf;
 
-use xmlrpc::{Request, Value, RequestError, Fault};
-use reqwest::Client;
+use clap::{App, Arg};
 use libflate::gzip::Decoder;
-use clap::{Arg, App};
+use xmlrpc::{Error as RequestError, Fault, Request, Value};
 
 /// opensubtitles XML-RPC API entry point
-const OST_API_URL: &'static str = "http:/api.opensubtitles.org/xml-rpc";
+const OST_API_URL: &'static str = "https://api.opensubtitles.org/xml-rpc";
 
 /// A commonly used Error
 const E_INV_RESP: Error = Error::Ost(Borrowed("invalid xml-rpc response"));
@@ -51,14 +49,14 @@ enum Error {
     Ost(Cow<'static, str>),
     XmlRpcRequest(RequestError),
     XmlRpcFault(Fault),
-    Reqwest(reqwest::Error)
+    Reqwest(reqwest::Error),
 }
 
 /// What subtitles to download, only the best one or all of them
 #[derive(PartialEq, Clone, Copy)]
 enum Which {
     Best,
-    All
+    All,
 }
 
 /// Converting all sub-errors into Error.
@@ -129,12 +127,11 @@ fn hash_block(mut file: &File) -> Result<Wrapping<u64>, io::Error> {
 
     file.read(&mut buf)?;
 
-    let buf_u64: [u64; CHUNKSIZE/8] = unsafe {
-        mem::transmute(buf)
-    };
+    let buf_u64: [u64; CHUNKSIZE / 8] = unsafe { mem::transmute(buf) };
 
-    let hash = buf_u64.iter()
-                      .fold(Wrapping(0), |sum, &i| sum+Wrapping(i));
+    let hash = buf_u64
+        .iter()
+        .fold(Wrapping(0), |sum, &i| sum + Wrapping(i));
 
     Ok(hash)
 }
@@ -153,28 +150,26 @@ pub fn size_and_hash(path: &OsStr) -> Result<(u64, u64), io::Error> {
     file.seek(SeekFrom::Start(seekto))?;
     let c2 = hash_block(&file)?;
 
-    Ok((fsize, (Wrapping(fsize)+c1+c2).0))
+    Ok((fsize, (Wrapping(fsize) + c1 + c2).0))
 }
 
 /// Converts an XML-RPC response into an OstDatamap
 fn val_to_response(v: &Value) -> Result<&OstDataMap, Error> {
-
     let resp = val_to_map(v).ok_or(E_INV_RESP)?;
 
-    let status = resp.get("status")
-                     .and_then(val_to_str)
-                     .ok_or(E_INV_RESP)?;
+    let status = resp.get("status").and_then(val_to_str).ok_or(E_INV_RESP)?;
 
     if status.starts_with("200") {
         Ok(resp)
     } else {
-        Err(Error::Ost(format!("xmlrpc request failed: {}", status).into()))
+        Err(Error::Ost(
+            format!("xmlrpc request failed: {}", status).into(),
+        ))
     }
 }
 
 /// Creates the body of the search request
-fn make_req(lang: &str, size: u64, hash: u64) -> Value
-{
+fn make_req(lang: &str, size: u64, hash: u64) -> Value {
     let mut m = BTreeMap::new();
     m.insert("sublanguageid".into(), Value::String(lang.to_string()));
     m.insert("moviehash".into(), Value::String(format!("{:x}", hash)));
@@ -194,21 +189,17 @@ fn score_cmp(a: &&Sub, b: &&Sub) -> Ordering {
     let a = a.score;
     let b = b.score;
     match (a.is_nan(), b.is_nan()) {
-        (true, true)  => Ordering::Equal,
+        (true, true) => Ordering::Equal,
         (true, false) => Ordering::Greater,
         (false, true) => Ordering::Less,
-        _             => b.partial_cmp(&a).unwrap()
+        _ => b.partial_cmp(&a).unwrap(),
     }
 }
 
 /// Returns the subtitles only for the given language
 /// sorted (higher score first)
 fn get_lang<'a>(subs: &'a Subs, lang: &str) -> SubRefs<'a> {
-
-    let mut lang_subs: SubRefs =
-        subs.iter()
-            .filter(|i| &i.lang == lang)
-            .collect();
+    let mut lang_subs: SubRefs = subs.iter().filter(|i| &i.lang == lang).collect();
 
     lang_subs.sort_by(score_cmp);
 
@@ -216,16 +207,13 @@ fn get_lang<'a>(subs: &'a Subs, lang: &str) -> SubRefs<'a> {
 }
 
 /// logs into OpenSubtitles API and returns the access token
-fn get_token() -> Result<String, Error>
-{
-    let client = Client::new();
-
+fn get_token() -> Result<String, Error> {
     let resp = Request::new("LogIn")
-              .arg("")
-              .arg("")
-              .arg("en")
-              .arg("opensubtitles-download 1.0")
-              .call(&client, OST_API_URL)??;
+        .arg("")
+        .arg("")
+        .arg("en")
+        .arg("opensubtitles-download 1.0")
+        .call_url(OST_API_URL)?;
 
     val_to_response(&resp)?
         .get("token")
@@ -238,46 +226,44 @@ fn get_token() -> Result<String, Error>
 fn match_to_sub(v: &Value) -> Option<Sub> {
     let data = val_to_map(v)?;
 
-    let url = data.get("SubDownloadLink")
-                .and_then(val_to_str)?
-                .into();
+    let url = data.get("SubDownloadLink").and_then(val_to_str)?.into();
 
-    let lang = data.get("SubLanguageID")
-                    .and_then(val_to_str)
-                    .unwrap_or("nolang")
-                    .into();
+    let lang = data
+        .get("SubLanguageID")
+        .and_then(val_to_str)
+        .unwrap_or("nolang")
+        .into();
 
-    let score = data.get("Score")
-                        .and_then(val_to_float)
-                        .unwrap_or(0f64);
+    let score = data.get("Score").and_then(val_to_float).unwrap_or(0f64);
 
-    let format = data.get("SubFormat")
-                    .and_then(val_to_str)
-                    .unwrap_or("srt")
-                    .into();
+    let format = data
+        .get("SubFormat")
+        .and_then(val_to_str)
+        .unwrap_or("srt")
+        .into();
 
-    Some(Sub { url, score, lang, format })
+    Some(Sub {
+        url,
+        score,
+        lang,
+        format,
+    })
 }
 
 /// Searches for the subtitles for the given file / languages
-fn find_subtitles(path: &OsStr, langs: &str, token: &str) -> Result<Subs, Error>
-{
+fn find_subtitles(path: &OsStr, langs: &str, token: &str) -> Result<Subs, Error> {
     let (size, hash) = size_and_hash(path)?;
 
-    let queries = Value::Array(vec!(make_req(langs, size, hash)));
+    let queries = Value::Array(vec![make_req(langs, size, hash)]);
 
-    let client = Client::new();
-
-    let search_resp =
-        Request::new("SearchSubtitles")
+    let search_resp = Request::new("SearchSubtitles")
         .arg(token)
         .arg(queries)
-        .call(&client, OST_API_URL)??;
+        .call_url(OST_API_URL)?;
 
     let resp = val_to_response(&search_resp)?;
 
     if let Value::Array(ref hits) = resp["data"] {
-
         // for i in hits.iter() {
         //     if let &Value::Struct(ref hits_struct) = i {
         //         for (k, v) in hits_struct {
@@ -286,11 +272,12 @@ fn find_subtitles(path: &OsStr, langs: &str, token: &str) -> Result<Subs, Error>
         //     }
         // }
 
-        let subs: Vec<Sub> = hits.iter()
-                                 .map(match_to_sub)
-                                 .filter(Option::is_some)
-                                 .map(Option::unwrap)
-                                 .collect();
+        let subs: Vec<Sub> = hits
+            .iter()
+            .map(match_to_sub)
+            .filter(Option::is_some)
+            .map(Option::unwrap)
+            .collect();
         Ok(subs)
     } else {
         Err(E_INV_RESP)
@@ -299,8 +286,7 @@ fn find_subtitles(path: &OsStr, langs: &str, token: &str) -> Result<Subs, Error>
 
 /// Fetches the data from the url and gunzips it into the file
 /// specified by the path
-fn download_to_file(url: &str, path: &OsString) -> Result<(), Error>
-{
+fn download_to_file(url: &str, path: &OsString) -> Result<(), Error> {
     let mut res = reqwest::get(url)?;
     let mut file = File::create(path)?;
     let mut gzipped = Vec::new();
@@ -316,13 +302,13 @@ fn download_to_file(url: &str, path: &OsString) -> Result<(), Error>
 
 /// Downloads the given subtitle, constructing the file name based on the
 /// original filename, the language and the index
-fn download_subtitle(fname_base: &PathBuf,
-                     lang: &str,
-                     idx: Option<usize>,
-                     sub: &Sub) -> Result<(), Error>
-{
-    let mut fname_os = fname_base.as_os_str()
-                                 .to_os_string();
+fn download_subtitle(
+    fname_base: &PathBuf,
+    lang: &str,
+    idx: Option<usize>,
+    sub: &Sub,
+) -> Result<(), Error> {
+    let mut fname_os = fname_base.as_os_str().to_os_string();
     if let Some(i) = idx {
         fname_os.push(format!(".{}-{}.{}", lang, i, &sub.format));
     } else {
@@ -331,37 +317,36 @@ fn download_subtitle(fname_base: &PathBuf,
 
     download_to_file(&sub.url, &fname_os)?;
 
-    println!("{} {:2.1}",
-        fname_os.to_string_lossy(),
-        sub.score);
+    println!("{} {:2.1}", fname_os.to_string_lossy(), sub.score);
 
     Ok(())
 }
 
 /// Downloads the subtitles for the given file, given languages, the ones
 /// that were requested (which)
-fn download_subtitles(fname: &OsStr,
-                      langs: &str,
-                      which: Which,
-                      token: &str) -> Result<(), Error>
-{
+fn download_subtitles(fname: &OsStr, langs: &str, which: Which, token: &str) -> Result<(), Error> {
     let subs = find_subtitles(fname, langs, token)?;
 
     let fname_path = PathBuf::from(&fname);
-    let fname_base: PathBuf = fname_path.file_stem()
-                              .map(PathBuf::from)
-                              .unwrap_or(fname_path.clone());
+    let fname_base: PathBuf = fname_path
+        .file_stem()
+        .map(PathBuf::from)
+        .unwrap_or(fname_path.clone());
 
     for lang in langs.split(',') {
         let lang_subs = get_lang(&subs, lang);
         if lang_subs.len() == 0 {
-            print_err(format!("{}: No {} subtitles", &fname_path.to_string_lossy(), lang));
+            print_err(format!(
+                "{}: No {} subtitles",
+                &fname_path.to_string_lossy(),
+                lang
+            ));
         } else if which == Which::Best {
             let res = download_subtitle(&fname_base, &lang, None, &lang_subs[0]);
             print_if_err(&res);
         } else {
             for (i, sub) in lang_subs.iter().enumerate() {
-                let res = download_subtitle(&fname_base, &lang, Some(i+1), &sub);
+                let res = download_subtitle(&fname_base, &lang, Some(i + 1), &sub);
                 print_if_err(&res);
             }
         }
@@ -371,24 +356,21 @@ fn download_subtitles(fname: &OsStr,
 }
 
 /// Prints an error to stderr
-fn print_err(err: String)
-{
+fn print_err(err: String) {
     eprintln!("{}", err);
 }
 
 /// If the input is an Error then prints it to stderr
-fn print_if_err<T>(res: &Result<T, Error>)
-{
+fn print_if_err<T>(res: &Result<T, Error>) {
     if let &Err(ref err) = res {
         match err {
-            &Error::Ost(ref e)            => { eprintln!("{}", e.to_string()) }
-            &Error::Io(ref e)             => { eprintln!("{}", e.to_string()) }
-            &Error::XmlRpcRequest(ref e)  => { eprintln!("{}", e.to_string()) }
-            &Error::XmlRpcFault(ref e)    => { eprintln!("{}", e.to_string()) }
-            &Error::Reqwest(ref e)        => { eprintln!("{}", e.to_string()) }
+            &Error::Ost(ref e) => eprintln!("{}", e.to_string()),
+            &Error::Io(ref e) => eprintln!("{}", e.to_string()),
+            &Error::XmlRpcRequest(ref e) => eprintln!("{}", e.to_string()),
+            &Error::XmlRpcFault(ref e) => eprintln!("{}", e.to_string()),
+            &Error::Reqwest(ref e) => eprintln!("{}", e.to_string()),
         }
     }
-
 }
 
 /// The real main
@@ -397,32 +379,37 @@ fn real_main() -> Result<(), Error> {
         .version(crate_version!())
         .author("Istvan Szekeres <szekeres@iii.hu>")
         .about("Downloads subtitles from opensubtitles.org")
-        .arg(Arg::with_name("langs")
-            .short("l")
-            .long("langs")
-            .help("Languages to download subtitles for, comma separated")
-            .required(false)
-            .takes_value(true))
-        .arg(Arg::with_name("all")
-            .short("a")
-            .long("all")
-            .help("Download all the subtitles for the selected languages")
-            .required(false)
-            .takes_value(false))
-        .arg(Arg::with_name("FILES")
-            .multiple(true)
-            .required(true)
-            .help("Files to download subtitles for"))
+        .arg(
+            Arg::with_name("langs")
+                .short("l")
+                .long("langs")
+                .help("Languages to download subtitles for, comma separated")
+                .required(false)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("all")
+                .short("a")
+                .long("all")
+                .help("Download all the subtitles for the selected languages")
+                .required(false)
+                .takes_value(false),
+        )
+        .arg(
+            Arg::with_name("FILES")
+                .multiple(true)
+                .required(true)
+                .help("Files to download subtitles for"),
+        )
         .get_matches();
 
-    let langs = args.value_of("langs")
-                    .unwrap_or("eng");
+    let langs = args.value_of("langs").unwrap_or("eng");
 
     let which = if args.is_present("all") {
-                    Which::All
-                } else {
-                    Which::Best
-                };
+        Which::All
+    } else {
+        Which::Best
+    };
 
     let token = get_token()?;
 

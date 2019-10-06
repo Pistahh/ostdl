@@ -13,6 +13,6 @@ ostdl, a downloader for opensubtitles.org
 
 [dependencies]
 clap = "2.27.1"
-reqwest = "0.8.1"
-xmlrpc = "0.9.0"
+reqwest = "0.9.21"
+xmlrpc = "0.13.1"
 libflate = "0.1.11"
