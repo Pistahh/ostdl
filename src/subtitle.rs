@@ -139,7 +139,12 @@ pub(crate) fn download_subtitles(
     let fname_path = PathBuf::from(&fname);
     let fname_base: PathBuf = fname_path
         .file_stem()
-        .map(PathBuf::from)
+        .map(|stem| {
+            let parent = fname_path.parent().expect("Error getting parent path");
+            let mut stem_with_path = parent.to_path_buf();
+            stem_with_path.push(stem);
+            stem_with_path
+        })
         .unwrap_or_else(|| fname_path.clone());
 
     for lang in langs.split(',') {
